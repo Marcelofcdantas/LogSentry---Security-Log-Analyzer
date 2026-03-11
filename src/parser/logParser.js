@@ -1,39 +1,31 @@
-const fs = require("fs");
-const path = require("path");
+function resolveLogPath(inputPath) {
+  const defaultPath = "sample-logs/access.log";
+  const targetPath = path.resolve(inputPath || defaultPath);
 
-function parseLogLine(line) {
-  const regex =
-    /^(\d+\.\d+\.\d+\.\d+)\s-\s-\s\[(.*?)\]\s"(\w+)\s(.*?)\sHTTP\/[\d.]+"\s(\d{3})$/;
-
-  const match = line.trim().match(regex);
-
-  if (!match) {
-    return null;
+  if (!fs.existsSync(targetPath)) {
+    throw new Error(`Path not found: ${targetPath}`);
   }
 
-  return {
-    ip: match[1],
-    timestamp: match[2],
-    method: match[3],
-    endpoint: match[4],
-    status: Number(match[5]),
-  };
-}
+  const stats = fs.statSync(targetPath);
 
-function parseLogFile(filePath) {
-  const resolvedPath = path.resolve(filePath);
-
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Log file not found: ${resolvedPath}`);
+  if (stats.isFile()) {
+    return targetPath;
   }
 
-  const content = fs.readFileSync(resolvedPath, "utf-8");
-  const lines = content.split("\n").filter((line) => line.trim() !== "");
+  if (stats.isDirectory()) {
+    const files = fs
+      .readdirSync(targetPath)
+      .map((fileName) => path.join(targetPath, fileName))
+      .filter((file) => fs.statSync(file).isFile())
+      .filter((file) => file.endsWith(".log"));
 
-  return lines.map(parseLogLine).filter(Boolean);
+    if (files.length === 0) {
+      throw new Error(`No .log files found in directory: ${targetPath}`);
+    }
+
+    files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    return files[0];
+  }
+
+  throw new Error(`Invalid path: ${targetPath}`);
 }
-
-module.exports = {
-  parseLogLine,
-  parseLogFile,
-};

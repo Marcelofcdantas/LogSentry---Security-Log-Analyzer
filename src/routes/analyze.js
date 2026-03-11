@@ -10,40 +10,51 @@ const {
   detectHighRequestRate,
   detectRepeated404,
 } = require("../detectors/anomalyDetector");
-const {
-  generateReport,
-  saveReportToFile,
-} = require("../reports/reportGenerator");
+const { generateReport } = require("../reports/reportGenerator");
+const { monitorLogFile } = require("../services/realtimeMonitor");
+
+function runAnalysis(logEntries) {
+  const detectionResults = [
+    ...detectBruteForce(logEntries),
+    ...detectSensitiveEndpointScanning(logEntries),
+    ...detectHighRequestRate(logEntries),
+    ...detectRepeated404(logEntries),
+  ];
+
+  return generateReport(logEntries, detectionResults);
+}
 
 router.get("/", (req, res) => {
   try {
     const filePath = req.query.file || "sample-logs/access.log";
-    const saveToFile = req.query.save === "true";
+    const realtime = req.query.realtime === "true";
 
-    const logEntries = parseLogFile(filePath);
+    if (!realtime) {
+      const logEntries = parseLogFile(filePath);
+      const report = runAnalysis(logEntries);
 
-    const detectionResults = [
-      ...detectBruteForce(logEntries),
-      ...detectSensitiveEndpointScanning(logEntries),
-      ...detectHighRequestRate(logEntries),
-      ...detectRepeated404(logEntries),
-    ];
-
-    const report = generateReport(logEntries, detectionResults);
-
-    if (saveToFile) {
-      const savedPath = saveReportToFile(report, "report.json");
       return res.json({
-        message: "Analysis complete and report saved successfully.",
-        saved_to: savedPath,
+        mode: "single-run",
+        file: filePath,
         report,
       });
     }
 
-    return res.json(report);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const watcher = monitorLogFile(filePath, (payload) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    });
+
+    req.on("close", () => {
+      watcher.close();
+      res.end();
+    });
   } catch (error) {
     return res.status(500).json({
-      error: "Failed to analyze log file.",
+      error: "Failed to analyze log file",
       details: error.message,
     });
   }
